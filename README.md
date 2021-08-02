@@ -1,2 +1,1 @@
-# Datanalysis
 Data Analysis Projects
