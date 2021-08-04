@@ -1,1 +1,2 @@
-Data Analysis Projects
+#Data Analysis Projects
+A data exploration project which utilized City of Toronto data on COVID-19 Cases. This project required data cleaning and wrangling. In total 5 visualizations were created to look at confirmed Covid-19 cases, Outbreak type, and COVID-19 case distribution throughout City of Toronto neighbourhoods. In particular mapping out cases based on income status and neighboorhood, as to determine if the prevalency of COVID-19 was higher in low income neighbourhoods. 
