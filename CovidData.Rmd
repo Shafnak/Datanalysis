@@ -1,0 +1,321 @@
+---
+output:
+  pdf_document: default
+urlcolor: blue
+header-includes:    
+  - \usepackage{lastpage}
+  - \usepackage{fancyhdr}
+  - \pagestyle{fancy}
+  - \fancyhead[CO, CE]{Shafna Kallil}
+  - \fancyfoot[CO, CE]{\thepage \ of \pageref{LastPage}}
+---
+
+
+```{r setup, message = FALSE, echo=FALSE, warning=FALSE}
+#Required Library Setup
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(opendatatoronto)
+library(ggthemes)
+library(formatR)
+library(knitr)
+
+# Wrapping Lines
+
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80), echo = TRUE)
+```
+
+
+```{r load_data, echo=FALSE}
+
+# Map of City of Toronto neighborhoods
+nbhoods_shape_raw <- list_package_resources("neighbourhoods") %>% 
+  get_resource()
+
+saveRDS(nbhoods_shape_raw, "data/neighbourhood_shapefile.Rds")
+
+#Information about Each neighborhood
+nbhood_profile <- search_packages("Neighbourhood Profile") %>%
+  list_package_resources() %>% 
+  filter(name == "neighbourhood-profiles-2016-csv") %>% 
+  get_resource()
+
+saveRDS(nbhood_profile, "data/neighbourhood_profile.Rds")
+
+# Daily Covid-19 Data File 
+daily_data <- "data/Dailydata.xlsx"
+
+# Cases by date
+reported_raw <- read_excel(daily_data, sheet = 5) %>% 
+  clean_names()
+
+# Cases by tyoe of outbreak
+outbreak_raw <- read_excel(daily_data, sheet = 3) %>% 
+  clean_names()
+
+# Update Date
+date_daily <- read_excel(daily_data, sheet = 1) %>% 
+  clean_names()
+
+# Neighborhood data file
+neighbourood_data <- "data/NeighbourhoodData.xlsx"
+
+# Cases reported by date in each neighborhood
+nbhood_raw <- read_excel(neighbourood_data, sheet = 2) %>% 
+  clean_names()
+
+# Date the neighbourhood data was last updated
+date_nbhood <- read_excel(neighbourood_data, sheet = 1) %>% 
+  clean_names()
+
+
+rm(daily_data, neighbourood_data)
+
+
+# Neighborhood Profile data
+nbhood_profile <- readRDS("data/neighbourhood_profile.Rds")
+
+# Shape data for mapping
+nbhoods_shape_raw <- readRDS("data/neighbourhood_shapefile.Rds") %>% 
+  sf::st_as_sf() 
+```
+
+
+Daily: `r date_daily[1,1]`.   
+Neighbourhood: `r date_nbhood[1,1]`. 
+
+# Task 1: Daily cases
+## Data wrangling
+
+```{r cases_dw, tidy=TRUE, tidy.opts=list(width.cutoff=60)}
+# Data Set with All NA values replaced with 0 
+
+reported <- reported_raw %>% mutate_if(is.numeric, replace_na, replace = 0) 
+
+# Character variable changed to date variable
+reported$reported_date <- date(reported$reported_date)
+
+# Capitalized the headers 
+reported <- reported %>% 
+  rename(Active = active) %>% 
+  rename(Recovered = recovered) %>% 
+  rename(Deceased = deceased)
+
+#Organize data by case type and number of cases 
+reported <- reported %>% 
+  pivot_longer(cols = c(2:4),
+               names_to = "Case Type", 
+               values_to = "Number of Cases")
+
+reported$reported_date <- date(reported$reported_date)
+
+
+# Set order for variable names
+reported$`Case Type` <- reported$`Case Type` %>% 
+  factor(levels = c("Active", "Recovered", "Deceased"),
+         ordered = TRUE)
+
+
+```
+
+\newpage
+## Data visualization
+
+```{r cases_vis, options=80}
+# Creates visualization using GGplot, scaled by date
+reported %>% ggplot(aes(x = reported_date, 
+                        y = `Number of Cases`,
+                        fill = `Case Type`)) +
+  geom_bar(stat = "identity", width = 1) +
+  scale_x_date(limits = c(date("2020-01-01"),date("2021-01-29")),
+               date_labels = "%e %b %y")+ 
+  theme_minimal() +
+  labs(title = "Cases reported by day in Toronto, Canada",
+       subtitle = "Confirmed and probable cases",
+       x = "Date",
+       y = "Case count",
+       caption = str_c("Created by: Shafna Kallil \n Source: Ontario Ministry of Health, Integrated Public Health Information System and CORES\n", date_daily[1,1])) +
+  theme(legend.title = element_blank(),
+        legend.position = c(0.15, 0.8)) +
+  scale_fill_manual(values = c("#003F5C", "#86BCB6", "#B9CA5D"))+ 
+  ylim(0,2000)
+
+
+```
+
+\newpage
+# Task 2: Outbreak type
+## Data wrangling
+
+
+```{r outbreak_dw}
+# Initializes new dataframe and changes character variable to date
+outbreak <- outbreak_raw
+outbreak$episode_week <- date(outbreak$episode_week)
+
+# Renames Variable "OB Associated" to "Outbreak Associated"
+outbreak$outbreak_or_sporadic[outbreak$outbreak_or_sporadic == "OB Associated"] <- "Outbreak associated"
+
+# Converts dataframe to wideform
+outbreak <- outbreak %>% 
+  pivot_wider(names_from = outbreak_or_sporadic,
+              values_from = cases)
+
+# Creates a new total case variable
+outbreak <- outbreak %>%
+  mutate("total_cases" = Sporadic + `Outbreak associated` )%>% 
+  pivot_longer(cols = c(2:3), 
+               names_to = "outbreak_or_sporadic",
+               values_to = "cases")
+
+# Any duplicated cases are recorded as NA
+outbreak$total_cases[duplicated(outbreak$total_cases)] <- NA
+
+# Variable names are ordered
+outbreak$outbreak_or_sporadic <- outbreak$outbreak_or_sporadic %>% 
+  factor(levels = c("Sporadic", "Outbreak associated"),
+         ordered = TRUE)
+
+
+```
+
+\newpage
+## Data visualization
+
+```{r outbreak_vis}
+# Initializes new data visualization which showcases outbreak type by date
+outbreak %>% ggplot(aes(x = episode_week, y = cases, fill = outbreak_or_sporadic))  +
+  geom_bar(stat = "identity", width = 6)+ 
+  scale_x_date(limits = c(date("2020-01-01"),date("2021-01-29")+7), date_labels = "%e %b %y")+ 
+  ylim(0, max(outbreak$total_cases))+
+  theme_minimal() +
+  labs(title = "Cases by outbreak type and week in Toronto, Canada",
+       subtitle = "Confirmed and probable cases",
+       x = "Date",
+       y = "Case count",
+       caption = str_c("Created by: Shafna Kallil \n Source: Ontario Ministry of Health, Integrated Public Health Information System and CORES\n", date_daily[1,1])) +
+  theme(legend.title = element_blank(),
+        legend.position = c(0.15, 0.8))+
+  scale_fill_manual(values = c("#86BCB6", "#B9CA5D"))
+
+
+```
+
+\newpage
+# Task 3: Neighbourhoods
+## Data wrangling: part 1
+
+```{r nbhood_dw_1}
+#Filters nbhood_profile data to get only low income data from 2015
+
+income <- nbhood_profile %>%  filter(Topic == "Low income in 2015")
+income <- income[1,]
+
+#Tidies the data so all the neighborhoods come under one name, and only relevant rows are kept
+income <- income %>% 
+  pivot_longer(cols = c(7:146), 
+               names_to = "neighbourhood_name", 
+               values_to = "Percentage")
+income <- income[,7:8]
+#Character string converted to numeric
+income$Percentage <- parse_number(income$Percentage)
+
+
+```
+
+## Data wrangling: part 2
+
+```{r nbhood_dw_2}
+#Creates new raw dataset with variables renamed and NAs omitted
+nr <- nbhood_raw %>% 
+  rename( rate_per_100000 = rate_per_100_000_people) %>% na.omit(rate_per_100_000_people) %>% 
+  mutate( neighbourhood_name = str_replace(neighbourhood_name,"St. James", "St.James")) %>% 
+  mutate( neighbourhood_name = str_replace(neighbourhood_name,"-Pelham", "-Pellam"))
+
+#cleans nbhoods shape
+nsr<- nbhoods_shape_raw %>% 
+  mutate(neighbourhood_name = nbhoods_shape_raw$AREA_NAME %>% 
+           str_remove( "\\s\\(\\d+\\)$")) 
+
+#cleans income 
+income <- income %>%
+  mutate( neighbourhood_name = str_replace(neighbourhood_name,"-Pelham", "-Pellam")) %>% 
+  mutate( neighbourhood_name = str_replace(neighbourhood_name,"St. James", "St.James"))
+
+
+#joins data + nbhoods shape
+
+nbhoods_all <- left_join(nsr,income, by = "neighbourhood_name") %>% 
+  left_join(nr, by = "neighbourhood_name")
+
+
+
+```
+
+## Data wrangling: part 3
+
+```{r nbhood_dw_3}
+#Creates final data variable
+
+nbhoods_final <- nbhoods_all
+
+
+#Finds the median values
+nbhoods_final$med_inc <- summary(nbhoods_all$Percentage)[3]
+nbhoods_final$med_rate <- summary(nbhoods_all$rate_per_100000)[3]
+                         
+                         
+#Creates nbhood_type variable                        
+nbhoods_final <- nbhoods_final %>%  mutate(nbhood_type = case_when(Percentage >= med_inc & rate_per_100000 >= med_rate ~ "Higher low income rate,higher case rate",
+Percentage >= med_inc & rate_per_100000 < med_rate ~ "Higher low income rate,lower case rate",
+ Percentage < med_inc & rate_per_100000 >= med_rate ~ "Lower low income rate,higher case rate",
+ Percentage < med_inc & rate_per_100000 < med_rate ~ "Lower low income rate,lower case rate"))
+
+
+```
+
+\newpage
+## Data visualization
+
+```{r neighbourhood_graphs_1, fig.height=4}
+#Initializes data visualization which showcases income dispersion throughout Toronot neighborhoods 
+
+ggplot(data = nbhoods_final, aes(geometry = geometry)) + geom_sf(aes(fill = Percentage)) + theme_map() +theme(legend.position = "right") + scale_fill_gradient(name = "% low income", low = "darkgreen", high = "lightgrey") + 
+  labs(title = "Percentage of 18 to 64 year olds living in a low income family (2015)", subtitle = "Neighbourhoods of Toronto, Canada", 
+caption = str_c("Created by: Shafna Kallil\n Source: Census Profile 98-316-X2016001 via OpenData Toronto\n", date_daily[1,1]))
+
+
+```
+
+\newpage
+
+```{r neighbourhood_graphs_2, fig.height=4}
+#Initializes data visualization which showcases COVID Case rates throughout Toronto neighborhoods 
+
+ggplot(data = nbhoods_final) + geom_sf(aes(fill = rate_per_100000)) + theme_map() +theme(legend.position = "right") + scale_fill_gradient(name = "Cases per 100,000 people", low = "white", high = "darkorange") + 
+  labs(title = "COVID-19 cases per 100,000, by neighbourhood in Toronto, Canada", 
+caption = str_c("Created by: Shafna Kallil\n Source: Ontario Ministry of Health, Integrated Public Health Information System and CORES\n", date_daily[1,1]))
+
+
+
+```
+
+\newpage
+
+```{r neighbourhood_graphs_3, fig.height=4}
+#Initializes data visualization which showcase the relation between COVID Case rates and Income throughout Toronto neighborhoods 
+ggplot(data = nbhoods_final) + 
+  geom_sf(aes(fill = nbhood_type)) + 
+  theme_map() +
+  theme(legend.position = "right") +
+  scale_fill_brewer(palette = "Set1", 
+                    name = "% of 18 to 64 year-olds in \n low income families and \n COVID-19 case rates") +
+  labs(title = "COVID-19 cases and low-income status by neighbourhood in Toronto, Canada",
+       caption = str_c("Created by: Shafna Kallil\n Income data source: Census Profile 98-316-X2016001 via OpenData Toronto \n COVID data source: Ontario Ministry of Health, Integrated Public\n Health Information System and CORES\n", date_daily[1,1]))
+
+
+```
+
+
+
